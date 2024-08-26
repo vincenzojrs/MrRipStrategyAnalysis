@@ -1,4 +1,4 @@
-# %%
+#
 import csv
 import polars as pl
 import yfinance as yf
