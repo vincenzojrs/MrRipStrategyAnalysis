@@ -1,10 +1,4 @@
-!pip install polars
-!pip install hvplot
-!pip install yfinance
-!pip install seaborn
-!pip install pyarrow
-!pip install scipy
-
+# %%
 import csv
 import polars as pl
 import yfinance as yf
@@ -12,7 +6,9 @@ import pyarrow
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib as mpl
+from scipy.stats import pearsonr
 
+# %%
 class Data_Engineering():
     def __init__(self, year):
         self.year = year
@@ -166,13 +162,18 @@ data_2022.amount_data_calculator()
 
 data_2022_2023 = data_2023.concatenate_data(data_2022)
 
-# Exploratory Data Analysis
+# %% [markdown]
+# # Exploratory Data Analysis
 
+# %%
 value_dataframe = pd.DataFrame(data_2022_2023.value_asset_data)
 plt.style.use('ggplot')
 
+# %%
+value_dataframe.head()
+
+# %%
 value_dataframe.plot(kind = 'bar', stacked = True, colormap = 'tab20b', figsize=(16,9))
-# Setting the DPI
 plt.gcf().set_dpi(300)
 plt.xlabel('Month')
 plt.ylabel('Asset Value')
@@ -180,17 +181,104 @@ plt.title('Asset Value per Month, 2022-2023')
 plt.legend(title='Asset', loc='upper left')
 plt.show()
 
-test.plot(kind = 'bar', figsize = (16,9), stacked = True, width = 0.9, colormap = 'tab20b')
+# %%
+amount_data, price_data = data_2022_2023.get_difference("amount"), data_2022_2023.get_difference("price", pct_change = True)
+
+# %%
+amount_data.to_pandas().plot(kind = 'bar', figsize = (16,9), stacked = True, width = 0.9, colormap = 'tab20b')
+plt.gcf().set_dpi(300)
+plt.xlabel('Month')
+plt.ylabel('Amount of asset bought')
+plt.title('Amount of asset bought each month, 2022-2023')
+plt.legend(title='Asset', loc='upper left')
 plt.axhline(y = 0, color = 'black', alpha = 0.7)
 plt.show()
 
-amount_difference, price_difference = data_2022_2023.get_difference('amount').to_pandas(), data_2022_2023.get_difference('price', pct_change = True).to_pandas()*100
+# %% [markdown]
+# ## Purchasing strategy, focus on the amount change vs. price change
 
-prova = pd.concat([amount_difference['VYMI'], price_difference['VYMI']], axis = 1).set_axis(["A", "P"], axis = 1).dropna()
-prova
+# %%
+class Correlation:
+    """The correlation class provide a series of attributes to manipulate data and get significant correlation coefficients between current and/or past prices and the amount of asset bought at any given time"""
+    def __init__(self, list_of_dataframes):
+        """
+        Args:
+            list_of_dataframes (list): a list containg different dataframes, whose columns will be the variables among which the correlation coefficients will be calculated
+        """
+        self.list_of_dataframes = list_of_dataframes
 
-import scipy.stats as stat
-res = stat.pearsonr(x = prova['P'], y = prova['A'])
-res
+    def add_shifting(self, list_of_dataframe_index_to_apply_shifting, list_of_lags, add = False):
+        """
+        Method to add lags - shifting the row up or down by n lags -, and eventually appending the shifted dataframe or substituiting it
+        Args: 
+            list_of_dataframe_index_to_apply_shifting (list) : a list contaings int, corresponding to the indexes of dataframe you want to apply shifting in self.list_of_dataframess list
+            list_of_lags (list) : a list containing positive or negative int, corresponding to the number of lags to be applied for each dataframe 
+            add (bool, default = False) : if you want to substitute or append the shifted dataframe
+
+        Example:
+            INSTANCE.add_shifting([1],[1], add = True)
+            will apply to the the 2nd dataframe of self.list_of_dataframse a shift of +1 and the resulting dataframe will be appended
+        """
+        for ix, dataframe_index in enumerate(list_of_dataframe_index_to_apply_shifting):
+            lag = list_of_lags[ix]
+            df = self.list_of_dataframes[dataframe_index]
+            shifted_df = df.shift(lag)  
+
+            # Renaming the column according to the lag applied
+            new_column_names = {col: f"{col}_{lag}" for col in df.columns}
+
+            shifted_df = shifted_df.rename(new_column_names)
+
+            # Replace the DataFrame in the list or append it if 'add' is True
+            if add:
+                self.list_of_dataframes.append(shifted_df)
+            else:
+                self.list_of_dataframes[dataframe_index] = shifted_df
+
+    def combine_dataframes(self, shared_names=False, list_of_suffix=None):
+        """
+        Method to combine dataframes. In case dataframes have the same name, prompt "True" and a list of suffix, per each dataframe, so that the first suffix will be added to all the columns in the first dataframe
+        Args:
+            shared_names (bool, default = False) : do the combined dataframe have at least one common column name?
+            list_of_suffix (list, default = None) : if shared_names == True, provide a list of strings for suffixes, one per each dataframe yo're going to combine. An empty string can be used if only a part of the dataframes share column names
+        """
+        if shared_names:
+            if list_of_suffix is None:
+                raise ValueError("list_of_suffix must be provided when shared_names is True")
+            
+            # Add suffixes to each DataFrame's columns
+            for index, df in enumerate(self.list_of_dataframes):
+                suffix = list_of_suffix[index]
+                self.list_of_dataframes[index] = df.rename(
+                    {col: f"{col}{suffix}" for col in df.columns}
+                )
+        
+        self.combined_dataframes = pl.concat(self.list_of_dataframes, how="horizontal").drop_nulls()
+
+    def calculate_correlation(self):
+        """
+        Calculate correlations among each pair of columns and display only the significant ones
+        """
+
+        columns = self.combined_dataframes.columns
+        
+        self.correlations = {}
+        
+        for column_a in columns:
+            for column_b in columns:
+                # Don't calculate correlation of a column with itself and skip the calculations with prices
+                if column_a == column_b or column_a.endswith("p"):
+                    continue
+                else:
+                    corr, p_value = pearsonr(self.combined_dataframes[column_a], self.combined_dataframes[column_b])
+                    if p_value <= 0.05:
+                        if f"{column_b} vs. {column_a}" not in self.correlations:
+                            self.correlations[f"{column_a} vs. {column_b}"] = float(corr)
+    
+correlation = Correlation([amount_data, price_data])
+correlation.add_shifting([1],[1], add = True)
+correlation.combine_dataframes(shared_names=True, list_of_suffix=['a','p','p'])
+correlation.calculate_correlation()
+correlation.correlations
 
 
