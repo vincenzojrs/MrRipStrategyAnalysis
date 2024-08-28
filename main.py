@@ -1,7 +1,17 @@
+!pip install polars
+!pip install hvplot
+!pip install yfinance
+!pip install seaborn
+!pip install pyarrow
+!pip install scipy
+
 import csv
 import polars as pl
 import yfinance as yf
-import hvplot
+import pyarrow
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib as mpl
 
 class Data_Engineering():
     def __init__(self, year):
@@ -155,15 +165,32 @@ data_2022.amount_data_calculator()
 # Concatenate data
 
 data_2022_2023 = data_2023.concatenate_data(data_2022)
-test = data_2022_2023.get_difference(mode = 'amount', pct_change = False)
 
-# %%
-print(test)
+# Exploratory Data Analysis
 
-# %%
-test.plot()
+value_dataframe = pd.DataFrame(data_2022_2023.value_asset_data)
+plt.style.use('ggplot')
 
-# %%
+value_dataframe.plot(kind = 'bar', stacked = True, colormap = 'tab20b', figsize=(16,9))
+# Setting the DPI
+plt.gcf().set_dpi(300)
+plt.xlabel('Month')
+plt.ylabel('Asset Value')
+plt.title('Asset Value per Month, 2022-2023')
+plt.legend(title='Asset', loc='upper left')
+plt.show()
 
+test.plot(kind = 'bar', figsize = (16,9), stacked = True, width = 0.9, colormap = 'tab20b')
+plt.axhline(y = 0, color = 'black', alpha = 0.7)
+plt.show()
+
+amount_difference, price_difference = data_2022_2023.get_difference('amount').to_pandas(), data_2022_2023.get_difference('price', pct_change = True).to_pandas()*100
+
+prova = pd.concat([amount_difference['VYMI'], price_difference['VYMI']], axis = 1).set_axis(["A", "P"], axis = 1).dropna()
+prova
+
+import scipy.stats as stat
+res = stat.pearsonr(x = prova['P'], y = prova['A'])
+res
 
 
