@@ -6,6 +6,7 @@ import pyarrow
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib as mpl
+import seaborn as sns
 from scipy.stats import pearsonr
 
 # %%
@@ -195,7 +196,14 @@ plt.axhline(y = 0, color = 'black', alpha = 0.7)
 plt.show()
 
 # %% [markdown]
-# ## Purchasing strategy, focus on the amount change vs. price change
+# # Detecting statistically significant correlations in asset purchasing
+# Given:
+# * a set of asset $A_{n}$,
+# * their quantity bought each month $Quantity_{A, t}$,
+# * their monthly price $Price_{A, t}$
+# 
+# For each asset $A$ is calculated the pearson correlation between its Quantity and Quantities and Prices of any other asset, at different time lags, as well.
+# The variables significantly correlated will be returned, and their correlation coefficients.
 
 # %%
 class Correlation:
@@ -280,5 +288,74 @@ correlation.add_shifting([1],[1], add = True)
 correlation.combine_dataframes(shared_names=True, list_of_suffix=['a','p','p'])
 correlation.calculate_correlation()
 correlation.correlations
+
+# %% [markdown]
+# # Detecting purchasing strategy: focusing on the amount each month using a time-series approach
+# Given:
+# * a set of asset $A_{n}$,
+# * their quantity bought each month $Quantity_{A, t}$,
+# 
+# For each asset $A$, using time-series analysis, discovering any statistically significant association between $Quantity_{A, t}$ at any given time and $Quantity_{A, t-n}$
+
+# %%
+import numpy as np
+import matplotlib.pyplot as plt
+from statsmodels.graphics.tsaplots import acf, pacf
+from statsmodels.tsa.stattools import adfuller, kpss
+import warnings
+from statsmodels.tools.sm_exceptions import InterpolationWarning
+warnings.simplefilter('ignore', InterpolationWarning)
+
+# %%
+amount_data = amount_data.to_pandas().dropna()
+amount_data.plot()
+
+# %%
+def adf_test(dataframe):
+    """
+        Calculating stationarity on each dataframe column using KPSS and ADF tests.
+        Args:
+            dataframe (pandas.Dataframe) : dataframe whose columns are time series and stationarity should be calculated
+        """
+    for column in dataframe.columns:
+        adf_test = adfuller(dataframe[column], autolag="AIC")
+        kpss_test = kpss(dataframe[column], regression="c", nlags="auto")
+        print("Stationarity check for", column)
+        if adf_test[1] < 0.05:
+            print("The series is stationary based on ADF test")
+        else: 
+            print("The series is not stationary based on ADF test")
+        if float(kpss_test[1]) < 0.05:
+            print("The series is not stationary based on KPSS test")
+        else:
+            print("The series is stationary based on KPSS test\n")
+    
+adf_test(amount_data)
+
+# %%
+def plotting(function):
+    plt.plot(function)
+    plt.axhline(0, color='grey')
+    plt.axhline(confidence_interval, linestyle='dashed')
+    plt.axhline(-confidence_interval, linestyle='dashed')
+
+for column in amount_data.columns:
+    acf_values = acf(amount_data[column])
+    pacf_values = pacf(amount_data[column])
+
+    confidence_interval = 1.96 / np.sqrt(len(amount_data[column]))
+    
+    if any(np.abs(acf_values[1:]) > confidence_interval) or any(np.abs(pacf_values[1:]) > confidence_interval):
+        
+        plt.subplot(211)
+        plotting(acf_values)
+        plt.title(f"ACF for {column}")
+
+        plt.subplot(212)
+        plotting(pacf_values)
+        plt.title(f"PACF for {column}")
+
+        plt.tight_layout()
+        plt.show()
 
 
