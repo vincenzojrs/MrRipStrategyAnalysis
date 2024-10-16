@@ -8,6 +8,9 @@ import matplotlib.pyplot as plt
 import matplotlib as mpl
 import seaborn as sns
 from scipy.stats import pearsonr
+from scipy.stats import linregress
+
+plt.style.use('bmh')
 
 # %%
 class Data_Engineering():
@@ -117,15 +120,21 @@ class Data_Engineering():
         if mode == "price":
             data = self.price_data if isinstance(self.price_data, pl.DataFrame) else self.to_polars(self.price_data)
             if pct_change:
-                self.price_difference_pct = data.select(pl.all().pct_change(diff))
+                self.price_difference_pct = data.select([
+                    pl.col(col).pct_change(diff).alias(f"{col}_{diff}_diff_pct_p") for col in data.columns
+                ])
                 return self.price_difference_pct
             else:
-                self.price_difference = data.select(pl.all().diff(diff))
+                self.price_difference = data.select([
+                    pl.col(col).diff(diff).alias(f"{col}_{diff}_diff_p") for col in data.columns
+                ])
                 return self.price_difference
 
         elif mode == "amount":
             data = self.amount_data if isinstance(self.amount_data, pl.DataFrame) else self.to_polars(self.amount_data)
-            self.difference_amount = data.select(pl.all().diff(diff))
+            self.difference_amount = data.select([
+                pl.col(col).diff(diff).alias(f"{col}_{diff}_diff_q") for col in data.columns
+            ])
             return self.difference_amount
 
     def concatenate_data(self, older):
@@ -163,34 +172,111 @@ data_2022.amount_data_calculator()
 
 data_2022_2023 = data_2023.concatenate_data(data_2022)
 
+# %%
+prices = pd.DataFrame(data_2022_2023.price_data)
+
+quantity = pd.DataFrame(data_2022_2023.amount_data)
+quantity_change = data_2022_2023.get_difference("amount", diff = 1, pct_change= False).to_pandas()
+
+value = pd.DataFrame(data_2022_2023.value_asset_data)
+
 # %% [markdown]
 # # Exploratory Data Analysis
 
-# %%
-value_dataframe = pd.DataFrame(data_2022_2023.value_asset_data)
-plt.style.use('ggplot')
+# %% [markdown]
+# ## Focus on Value
+
+# %% [markdown]
+# * All'inizio dell'analisi, a gennaio 2022, il portafoglio in oggetto raggiungeva un valore di circa 750'694€.
+# * Il valore del portafoglio ha goduto di un trend positivo negli anni in oggetto, con un valore al termine dell'analisi di 939'886€; con una crescita mensile media del valore del portafogli di 10440€ e una variazione nell'intero periodo del 25.20%.
+# * Il minimo globale è stato raggiunto nel giugno 2022, di circa 657'995€, con un drawdown del -12% dai massimi precedenti.
+# * Lo stesso mese è stato raggiunto il massimo drawdown mensile dell'intero periodo, pari al -9.45%.
+# * Un ulteriore importante drawdown è stato registrato ad ottobre 2023, pari al -8.77%.
+# * L'oscillazione positiva massima è stata raggiunta a novembre 2022, pari al  +8.30%-
+# * Il ritorno medio mensile è pari al +1.10%, mentre la deviazione standard dei rendimenti mensili è pari al 5.04%
 
 # %%
-value_dataframe.head()
+def subplotting_dataframe(dataframe):
+    """
+        Plotting each column in a dataframe using subplots
+
+        Parameters: 
+        dataframe (pd.DataFrame)
+    """
+    num_columns = len(dataframe.columns)
+    fig, axs = plt.subplots(num_columns, 1, figsize=(8, 2 * num_columns))
+    plt.gcf().set_dpi(150)
+
+    # Plot each column in a separate subplot
+    for i, column in enumerate(dataframe.columns):
+        axs[i].plot(dataframe.index, dataframe[column])
+        axs[i].set_title(f'{column}')
+        axs[i].grid(True)
+
+    plt.axhline(y = 0, color = 'black', alpha = 0.5, linewidth = 1)
+    plt.tight_layout()
+    plt.show()
 
 # %%
-value_dataframe.plot(kind = 'bar', stacked = True, colormap = 'tab20b', figsize=(16,9))
+monthly_value = pd.DataFrame([value.sum(axis =1), value.sum(axis = 1).pct_change()*100]).T
+monthly_value.rename(columns = {0:"abs", 1:"return"}, inplace = True)     
+
+# %%
+print(f"\n{'='*50}")
+print(f"{'Analysis Report':^50}")
+print(f"{'='*50}\n")
+
+print(f"First period value: {monthly_value['abs'][0]:,}")
+print(f"Last period value: {monthly_value['abs'][23]:,}")
+print(f"Average monthly variability: {int(linregress(monthly_value.index, monthly_value['abs'])[0]):,}")
+total_variation = (monthly_value['abs'][23] - monthly_value['abs'][0]) / monthly_value['abs'][0] * 100
+print(f"Total variation: {total_variation:.2f}%")
+print(f"Minimum of {monthly_value['abs'].min():,} reached at month {monthly_value['abs'].idxmin()+1}")
+print(f"Maximum of {monthly_value['abs'].max():,} reached at month {monthly_value['abs'].idxmax()+1}")
+print(f"Mean of Asset Value: {monthly_value['abs'].mean():,.2f}")
+print(f"Standard Deviation of Asset Value: {monthly_value['abs'].std():,.2f}\n")
+
+print(f"{'-'*50}")
+print(f"{'Return Analysis':^50}")
+print(f"{'-'*50}\n")
+
+print(f"Minimum return: {monthly_value['return'].min():.2f}% reached at month {monthly_value['return'].idxmin()+1}")
+print(f"Maximum return: {monthly_value['return'].max():.2f}% reached at month {monthly_value['return'].idxmax()+1}")
+print(f"Mean of monthly returns: {monthly_value['return'].mean():.2f}%")
+print(f"Standard Deviation of monthly returns: {monthly_value['return'].std():.2f}%\n")
+
+# formatted using chatgpt :)
+
+# %%
+subplotting_dataframe(monthly_value)
+
+# %% [markdown]
+# ## Focus on Quantity
+
+# %%
+quantity.head()
+
+# %%
+quantity.plot(kind = 'line', figsize=(16,9), colormap = 'tab20b')
 plt.gcf().set_dpi(300)
 plt.xlabel('Month')
-plt.ylabel('Asset Value')
-plt.title('Asset Value per Month, 2022-2023')
+plt.ylabel('Number of Asset')
+plt.title('Number of Asset per Month, 2022-2023')
 plt.legend(title='Asset', loc='upper left')
 plt.show()
 
-# %%
-amount_data, price_data = data_2022_2023.get_difference("amount"), data_2022_2023.get_difference("price", pct_change = True)
+# %% [markdown]
+# ## Focus on purchasing strategy each month
 
 # %%
-amount_data.to_pandas().plot(kind = 'bar', figsize = (16,9), stacked = True, width = 0.9, colormap = 'tab20b')
+quantity_change.head()
+
+# %%
+quantity_change.plot(kind = 'bar', figsize = (16,9), stacked = True, width = 0.9, colormap = 'tab20b')
 plt.gcf().set_dpi(300)
 plt.xlabel('Month')
-plt.ylabel('Amount of asset bought')
-plt.title('Amount of asset bought each month, 2022-2023')
+plt.ylabel('Net number of asset traded')
+plt.title('Net number of asset traded each month, 2022-2023')
 plt.legend(title='Asset', loc='upper left')
 plt.axhline(y = 0, color = 'black', alpha = 0.7)
 plt.show()
@@ -206,94 +292,72 @@ plt.show()
 # The variables significantly correlated will be returned, and their correlation coefficients.
 
 # %%
-class Correlation:
-    """The correlation class provide a series of attributes to manipulate data and get significant correlation coefficients between current and/or past prices and the amount of asset bought at any given time"""
-    def __init__(self, list_of_dataframes):
-        """
-        Args:
-            list_of_dataframes (list): a list containg different dataframes, whose columns will be the variables among which the correlation coefficients will be calculated
-        """
-        self.list_of_dataframes = list_of_dataframes
+def add_suffix_and_combine_dfs(dfs, suffixes):  
+    """
+    Combine dataframes and add suffixes in case they share the same columns
+    Parameters:
+    dfs (list of pd.DataFrame) : A list containing the dataframes to be concatenated
+    suffixes (list of strings) : A list containing the suffixes to be added to each dataframe. REMEMBER: also '' can be used
 
-    def add_shifting(self, list_of_dataframe_index_to_apply_shifting, list_of_lags, add = False):
-        """
-        Method to add lags - shifting the row up or down by n lags -, and eventually appending the shifted dataframe or substituiting it
-        Args: 
-            list_of_dataframe_index_to_apply_shifting (list) : a list contaings int, corresponding to the indexes of dataframe you want to apply shifting in self.list_of_dataframess list
-            list_of_lags (list) : a list containing positive or negative int, corresponding to the number of lags to be applied for each dataframe 
-            add (bool, default = False) : if you want to substitute or append the shifted dataframe
-
-        Example:
-            INSTANCE.add_shifting([1],[1], add = True)
-            will apply to the the 2nd dataframe of self.list_of_dataframse a shift of +1 and the resulting dataframe will be appended
-        """
-        for ix, dataframe_index in enumerate(list_of_dataframe_index_to_apply_shifting):
-            lag = list_of_lags[ix]
-            df = self.list_of_dataframes[dataframe_index]
-            shifted_df = df.shift(lag)  
-
-            # Renaming the column according to the lag applied
-            new_column_names = {col: f"{col}_{lag}" for col in df.columns}
-
-            shifted_df = shifted_df.rename(new_column_names)
-
-            # Replace the DataFrame in the list or append it if 'add' is True
-            if add:
-                self.list_of_dataframes.append(shifted_df)
-            else:
-                self.list_of_dataframes[dataframe_index] = shifted_df
-
-    def combine_dataframes(self, shared_names=False, list_of_suffix=None):
-        """
-        Method to combine dataframes. In case dataframes have the same name, prompt "True" and a list of suffix, per each dataframe, so that the first suffix will be added to all the columns in the first dataframe
-        Args:
-            shared_names (bool, default = False) : do the combined dataframe have at least one common column name?
-            list_of_suffix (list, default = None) : if shared_names == True, provide a list of strings for suffixes, one per each dataframe yo're going to combine. An empty string can be used if only a part of the dataframes share column names
-        """
-        if shared_names:
-            if list_of_suffix is None:
-                raise ValueError("list_of_suffix must be provided when shared_names is True")
-            
-            # Add suffixes to each DataFrame's columns
-            for index, df in enumerate(self.list_of_dataframes):
-                suffix = list_of_suffix[index]
-                self.list_of_dataframes[index] = df.rename(
-                    {col: f"{col}{suffix}" for col in df.columns}
-                )
-        
-        self.combined_dataframes = pl.concat(self.list_of_dataframes, how="horizontal").drop_nulls()
-
-    def calculate_correlation(self):
-        """
-        Calculate correlations among each pair of columns and display only the significant ones
-        """
-
-        columns = self.combined_dataframes.columns
-        
-        self.correlations = {}
-        
-        for column_a in columns:
-            for column_b in columns:
-                # Don't calculate correlation of a column with itself and skip the calculations with prices
-                if column_a == column_b or column_a.endswith("p"):
-                    continue
-                else:
-                    corr, p_value = pearsonr(self.combined_dataframes[column_a], self.combined_dataframes[column_b])
-                    if p_value <= 0.05:
-                        if f"{column_b} vs. {column_a}" not in self.correlations:
-                            self.correlations[f"{column_a} vs. {column_b}"] = float(corr)
+    Returns:
+    combined_df (pd.DataFrame) : The dataframe combined
+    """
+    modified_dfs = []
     
-correlation = Correlation([amount_data, price_data])
-correlation.add_shifting([1],[1], add = True)
-correlation.combine_dataframes(shared_names=True, list_of_suffix=['a','p','p'])
-correlation.calculate_correlation()
-correlation.correlations
+    for df, suffix in zip(dfs, suffixes):
+        # Add suffix to column names
+        df.columns = [f"{col}{suffix}" for col in df.columns]
+        modified_dfs.append(df)
+    
+    # Combine DataFrames horizontally
+    combined_df = pd.concat(modified_dfs, axis=1)
+    
+    return combined_df
+
+
+# %%
+def calculate_correlation(dataframe):
+    """
+    Calculate correlations among each pair of columns and display only the significant ones.
+    
+    Parameters:
+    dataframe (pd.DataFrame): The DataFrame to calculate correlations for.
+    
+    Returns:
+    dict: A dictionary with significant correlations.
+    """
+    
+    columns = dataframe.columns
+    correlations = {}
+    
+    for i, column_a in enumerate(columns):
+        for column_b in columns[i + 1:]:  # Ensure we only compare each pair once
+            # Check if both columns end with 'p'
+            if column_a.endswith('p') and column_b.endswith('p'):
+                continue
+            
+            # Calculate Pearson correlation and p-value
+            corr, p_value = pearsonr(dataframe[column_a], dataframe[column_b])
+            
+            # Record significant correlations
+            if p_value <= 0.05:
+                correlations[f"{column_a} vs. {column_b}"] = float(corr)
+
+    return correlations
+
+# %%
+price_change_1 = data_2022_2023.get_difference('price', diff = 1, pct_change = False).to_pandas()
+price_change_2 = data_2022_2023.get_difference('price', diff = 2, pct_change = False).to_pandas()
+price_change_3 = data_2022_2023.get_difference('price', diff = 3, pct_change = False).to_pandas()
+
+correlation_dataframe = add_suffix_and_combine_dfs([quantity, quantity_change, prices, price_change_1, price_change_2, price_change_3], ['q', '', 'p', '', '', '']).dropna()
+
+calculate_correlation(correlation_dataframe)
 
 # %% [markdown]
-# # Detecting purchasing strategy: focusing on the amount each month using a time-series approach
+# # Detecting purchasing strategy: focusing on the amount of stocks owned each month of the same asset using a time-series approach
 # Given:
-# * a set of asset $A_{n}$,
-# * their quantity bought each month $Quantity_{A, t}$,
+# * an the array of the number of units, for each month $A_{t}$,
 # 
 # For each asset $A$, using time-series analysis, discovering any statistically significant association between $Quantity_{A, t}$ at any given time and $Quantity_{A, t-n}$
 
@@ -301,14 +365,31 @@ correlation.correlations
 import numpy as np
 import matplotlib.pyplot as plt
 from statsmodels.graphics.tsaplots import acf, pacf
+from statsmodels.tsa.arima.model import ARIMA
 from statsmodels.tsa.stattools import adfuller, kpss
 import warnings
 from statsmodels.tools.sm_exceptions import InterpolationWarning
 warnings.simplefilter('ignore', InterpolationWarning)
 
 # %%
-amount_data = amount_data.to_pandas().dropna()
-amount_data.plot()
+def subplotting_dataframe(dataframe):
+    """
+        Plotting each column in a dataframe using subplots
+
+        Parameters: 
+        dataframe (pd.DataFrame)
+    """
+    num_columns = len(dataframe.columns)
+    fig, axs = plt.subplots(num_columns, 1, figsize=(8, 2 * num_columns))
+
+    # Plot each column in a separate subplot
+    for i, column in enumerate(dataframe.columns):
+        axs[i].plot(dataframe.index, dataframe[column])
+        axs[i].set_title(f'{column}')
+        axs[i].grid(True)
+
+    plt.tight_layout()
+    plt.show()
 
 # %%
 def adf_test(dataframe):
@@ -316,7 +397,7 @@ def adf_test(dataframe):
         Calculating stationarity on each dataframe column using KPSS and ADF tests.
         Args:
             dataframe (pandas.Dataframe) : dataframe whose columns are time series and stationarity should be calculated
-        """
+    """
     for column in dataframe.columns:
         adf_test = adfuller(dataframe[column], autolag="AIC")
         kpss_test = kpss(dataframe[column], regression="c", nlags="auto")
@@ -326,36 +407,187 @@ def adf_test(dataframe):
         else: 
             print("The series is not stationary based on ADF test")
         if float(kpss_test[1]) < 0.05:
-            print("The series is not stationary based on KPSS test")
+            print("The series is not stationary based on KPSS test\n")
         else:
             print("The series is stationary based on KPSS test\n")
-    
-adf_test(amount_data)
+
+# %%
+subplotting_dataframe(quantity)
+
+# %%
+adf_test(quantity)
+
+# %% [markdown]
+# # Detecting purchasing strategy: focusing on the amount bought each month of the same asset using a time-series approach
+# Given:
+# * a set of asset $A_{n}$,
+# * their quantity bought each month $Quantity_{A, t}$,
+# 
+# For each asset $A$, using time-series analysis, discovering any statistically significant association between $Quantity_{A, t}$ at any given time and $Quantity_{A, t-n}$
+
+# %% [markdown]
+# Interestingly enough, the couples
+# * VT - VYM
+# * CHECK - ERUS
+# * VBR - SONY
+# * VYMI - VSS 
+# 
+# show some visual similarities. However, correlation among different asset will be assessed in a different section
+
+# %%
+subplotting_dataframe(quantity_change)
+
+# %%
+adf_test(quantity_change.dropna())
+
+# %% [markdown]
+# Plotting Time Series, ACF and PACF
 
 # %%
 def plotting(function):
-    plt.plot(function)
+    x_values = np.arange(0, len(function))
+    plt.plot(x_values, function)
     plt.axhline(0, color='grey')
     plt.axhline(confidence_interval, linestyle='dashed')
     plt.axhline(-confidence_interval, linestyle='dashed')
+    plt.xticks(x_values)
 
 for column in amount_data.columns:
+    # For each amount of asset bought and sold, calculate the auto correlation and partial autocorrelation functions
     acf_values = acf(amount_data[column])
     pacf_values = pacf(amount_data[column])
 
+    # Define a confidence interval
     confidence_interval = 1.96 / np.sqrt(len(amount_data[column]))
     
+    # If any of ACF-PACF value exceed the confidence interval excluding the first one - which is always statistically significant - , display the time series, the ACF and PACF
     if any(np.abs(acf_values[1:]) > confidence_interval) or any(np.abs(pacf_values[1:]) > confidence_interval):
         
-        plt.subplot(211)
+        fig = plt.figure(figsize=(16, 9))
+        gs = fig.add_gridspec(2, 2, width_ratios=[2, 1])
+
+        # Time series plot spanning two rows
+        ax0 = fig.add_subplot(gs[:, 0]) 
+        ax0.plot(amount_data[column])
+        ax0.set_title(f"Time Series for {column}")
+        x_values_original = np.arange(1, len(amount_data[column]) + 1)
+        ax0.set_xticks(x_values_original)
+
+        # ACF plot
+        ax1 = fig.add_subplot(gs[0, 1])
+        plt.sca(ax1)
         plotting(acf_values)
         plt.title(f"ACF for {column}")
 
-        plt.subplot(212)
+        # PACF plot
+        ax2 = fig.add_subplot(gs[1, 1])
+        plt.sca(ax2)
         plotting(pacf_values)
         plt.title(f"PACF for {column}")
 
         plt.tight_layout()
         plt.show()
+
+# %% [markdown]
+# Time lags where ACF or PACF exceeds confidence intervals will be the starting point for parameters selection MA and AR models, respectively.
+# At time lag 0, ACF and PACF always indicate strong association between any given time lag, and itself. Given that, ACF and PACF at time lag 0 will not be considered.
+
+# %% [markdown]
+# ### Testing, fourier and SARIMA
+
+# %%
+from statsmodels.stats.diagnostic import acorr_ljungbox
+from pmdarima.arima import auto_arima
+from statsmodels.tsa.statespace.sarimax import SARIMAX
+from statsmodels.tsa.seasonal import STL
+from scipy.fft import fft, fftfreq
+
+# %%
+data = amount_data["VBR"]
+data.plot()
+
+# %%
+data
+
+# %%
+data = {
+    'time': np.arange(1, 24),
+    'value': [
+        -0.000005, -1.494895, 0.000028, -0.000029, -2.019398,
+        0.000128, -0.000129, -2.151471, -0.000045, 0.000012,
+        -2.913871, -0.000091, -0.000036, -2.433334, -0.000081,
+        -0.000004, -2.272892, 0.000031, -0.000041, -2.205292,
+        0.000083, -0.000014, -2.649706
+    ]
+}
+
+df = pd.DataFrame(data)
+
+plt.plot(df['time'], df['value'])
+plt.title('Time Series Data')
+plt.grid()
+plt.show()
+
+
+n = len(df['value'])
+yf = fft(df['value'])
+xf = fftfreq(n, 1)[:n//2]  # Only positive frequencies
+
+
+plt.plot(xf, 2.0/n * np.abs(yf[:n//2])
+plt.xlabel('Frequency')
+plt.ylabel('Amplitude')
+plt.grid()
+plt.show()
+
+# %%
+# Decomposition
+
+advanced_decomposition = STL(data['Value'], period = 3).fit()
+
+fig, (ax1, ax2, ax3, ax4) = plt.subplots(nrows=4, ncols=1, sharex=True)
+
+ax1.plot(advanced_decomposition.observed)
+ax1.set_ylabel('Observed')
+
+ax2.plot(advanced_decomposition.trend)
+ax2.set_ylabel('Trend')
+
+ax3.plot(advanced_decomposition.seasonal)
+ax3.set_ylabel('Seasonal')
+
+ax4.plot(advanced_decomposition.resid)
+ax4.set_ylabel('Residuals')
+
+fig.autofmt_xdate()
+plt.tight_layout()
+
+# %%
+ARIMA_model = auto_arima(amount_data['VBR'], error_action='ignore', trace=True, suppress_warnings=True, seasonal=True, m = 4)
+ARIMA_model.summary()
+
+# %%
+results.plot_diagnostics();
+residuals = results.resid
+
+# %%
+acorr_ljungbox(residuals, np.arange(1, 2, 1))
+
+# %%
+SARIMA_model = SARIMAX(amount_data["VBR"], order=(1,1,1), seasonal_order=(2,0,1,2))
+SARIMA_model_fit = SARIMA_model.fit(disp=False)
+SARIMA_model_fit.plot_diagnostics(figsize=(10,8));
+
+# %%
+residuals = SARIMA_model_fit.resid
+
+# %%
+residuals
+
+# %%
+acorr_ljungbox(residuals, np.arange(1, 2, 1))
+
+# %%
+
 
 
